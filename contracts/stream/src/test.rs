@@ -20,6 +20,7 @@ struct TestContext<'a> {
     token_id: Address,
     sender: Address,
     recipient: Address,
+    admin: Address,
     sac: StellarAssetClient<'a>,
 }
 
@@ -55,6 +56,51 @@ impl<'a> TestContext<'a> {
             token_id,
             sender,
             recipient,
+            admin,
+            sac,
+        }
+    }
+
+    /// Setup context without mock_all_auths(), for explicit auth testing
+    fn setup_strict() -> Self {
+        let env = Env::default();
+
+        let contract_id = env.register_contract(None, FluxoraStream);
+
+        let token_admin = Address::generate(&env);
+        let token_id = env
+            .register_stellar_asset_contract_v2(token_admin.clone())
+            .address();
+
+        let admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        let client = FluxoraStreamClient::new(&env, &contract_id);
+        client.init(&token_id, &admin);
+
+        let sac = StellarAssetClient::new(&env, &token_id);
+
+        // Mock the minting auth since mock_all_auths is not enabled.
+        use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+        env.mock_auths(&[MockAuth {
+            address: &token_admin,
+            invoke: &MockAuthInvoke {
+                contract: &token_id,
+                fn_name: "mint",
+                args: (&sender, 10_000_i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        sac.mint(&sender, &10_000_i128);
+
+        TestContext {
+            env,
+            contract_id,
+            token_id,
+            sender,
+            recipient,
+            admin,
             sac,
         }
     }
@@ -762,6 +808,130 @@ fn test_withdraw_requires_recipient_authorization() {
     // can authorize this call, which is equivalent to checking env.invoker() == recipient
 }
 
+#[test]
+fn test_withdraw_recipient_success() {
+    let ctx = TestContext::setup_strict();
+
+    use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+    ctx.env.mock_auths(&[MockAuth {
+        address: &ctx.sender,
+        invoke: &MockAuthInvoke {
+            contract: &ctx.contract_id,
+            fn_name: "create_stream",
+            args: (
+                &ctx.sender,
+                &ctx.recipient,
+                1000_i128,
+                1_i128,
+                0u64,
+                0u64,
+                1000u64,
+            )
+                .into_val(&ctx.env),
+            sub_invokes: &[MockAuthInvoke {
+                contract: &ctx.token_id,
+                fn_name: "transfer",
+                args: (&ctx.sender, &ctx.contract_id, 1000_i128).into_val(&ctx.env),
+                sub_invokes: &[],
+            }],
+        },
+    }]);
+
+    ctx.env.ledger().set_timestamp(0);
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    ctx.env.ledger().set_timestamp(500);
+
+    // Mock recipient auth for withdraw
+    ctx.env.mock_auths(&[MockAuth {
+        address: &ctx.recipient,
+        invoke: &MockAuthInvoke {
+            contract: &ctx.contract_id,
+            fn_name: "withdraw",
+            args: (stream_id,).into_val(&ctx.env),
+            sub_invokes: &[MockAuthInvoke {
+                contract: &ctx.token_id,
+                fn_name: "transfer",
+                args: (&ctx.contract_id, &ctx.recipient, 500_i128).into_val(&ctx.env),
+                sub_invokes: &[],
+            }],
+        },
+    }]);
+
+    let recipient_before = ctx.token().balance(&ctx.recipient);
+    let amount = ctx.client().withdraw(&stream_id);
+
+    assert_eq!(amount, 500);
+    assert_eq!(ctx.token().balance(&ctx.recipient) - recipient_before, 500);
+}
+
+#[test]
+#[should_panic]
+fn test_withdraw_not_recipient_unauthorized() {
+    let ctx = TestContext::setup_strict();
+
+    use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
+    ctx.env.mock_auths(&[MockAuth {
+        address: &ctx.sender,
+        invoke: &MockAuthInvoke {
+            contract: &ctx.contract_id,
+            fn_name: "create_stream",
+            args: (
+                &ctx.sender,
+                &ctx.recipient,
+                1000_i128,
+                1_i128,
+                0u64,
+                0u64,
+                1000u64,
+            )
+                .into_val(&ctx.env),
+            sub_invokes: &[MockAuthInvoke {
+                contract: &ctx.token_id,
+                fn_name: "transfer",
+                args: (&ctx.sender, &ctx.contract_id, 1000_i128).into_val(&ctx.env),
+                sub_invokes: &[],
+            }],
+        },
+    }]);
+
+    ctx.env.ledger().set_timestamp(0);
+    let stream_id = ctx.client().create_stream(
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &0u64,
+        &0u64,
+        &1000u64,
+    );
+
+    ctx.env.ledger().set_timestamp(500);
+
+    // Mock sender's auth for withdraw, which should fail because the contract
+    // expects the recipient's auth.
+    ctx.env.mock_auths(&[MockAuth {
+        address: &ctx.sender,
+        invoke: &MockAuthInvoke {
+            contract: &ctx.contract_id,
+            fn_name: "withdraw",
+            args: (stream_id,).into_val(&ctx.env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    // This should panic with authorization failure because sender != recipient
+    ctx.client().withdraw(&stream_id);
+}
+
 // ---------------------------------------------------------------------------
 // Tests — Issue #37: withdraw reject when stream is Paused
 // ---------------------------------------------------------------------------
@@ -1252,16 +1422,19 @@ fn test_get_config() {
 fn test_cancel_fully_accrued_no_refund() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_default_stream();
-    
+
     // 1000 seconds pass → 1000 tokens accrued (full deposit)
     ctx.env.ledger().set_timestamp(1000);
 
     let sender_balance_before = ctx.token().balance(&ctx.sender);
     ctx.client().cancel_stream(&stream_id);
-    
+
     let sender_balance_after = ctx.token().balance(&ctx.sender);
-    assert_eq!(sender_balance_after, sender_balance_before, "nothing should be refunded");
-    
+    assert_eq!(
+        sender_balance_after, sender_balance_before,
+        "nothing should be refunded"
+    );
+
     let state = ctx.client().get_stream_state(&stream_id);
     assert_eq!(state.status, StreamStatus::Cancelled);
 }
@@ -1274,12 +1447,12 @@ fn test_withdraw_multiple_times() {
     // Withdraw 200 at t=200
     ctx.env.ledger().set_timestamp(200);
     ctx.client().withdraw(&stream_id);
-    
+
     // Withdraw another 300 at t=500
     ctx.env.ledger().set_timestamp(500);
     let amount = ctx.client().withdraw(&stream_id);
     assert_eq!(amount, 300);
-    
+
     let state = ctx.client().get_stream_state(&stream_id);
     assert_eq!(state.withdrawn_amount, 500);
 }
@@ -1289,23 +1462,41 @@ fn test_withdraw_multiple_times() {
 fn test_create_stream_invalid_cliff_panics() {
     let ctx = TestContext::setup();
     ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1000, &1, &100, &50, &200 // cliff < start
+        &ctx.sender,
+        &ctx.recipient,
+        &1000,
+        &1,
+        &100,
+        &50,
+        &200, // cliff < start
     );
 }
 
 #[test]
 fn test_create_stream_edge_cliffs() {
     let ctx = TestContext::setup();
-    
+
     // Cliff at start_time
     let id1 = ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &100, &100, &1100
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &100,
+        &100,
+        &1100,
     );
     assert_eq!(ctx.client().get_stream_state(&id1).cliff_time, 100);
 
     // Cliff at end_time
     let id2 = ctx.client().create_stream(
-        &ctx.sender, &ctx.recipient, &1000_i128, &1_i128, &100, &1100, &1100
+        &ctx.sender,
+        &ctx.recipient,
+        &1000_i128,
+        &1_i128,
+        &100,
+        &1100,
+        &1100,
     );
     assert_eq!(ctx.client().get_stream_state(&id2).cliff_time, 1100);
 }
@@ -1317,5 +1508,8 @@ fn test_calculate_accrued_exactly_at_cliff() {
     ctx.env.ledger().set_timestamp(500);
 
     let accrued = ctx.client().calculate_accrued(&stream_id);
-    assert_eq!(accrued, 500, "at cliff, should accrue full amount from start");
+    assert_eq!(
+        accrued, 500,
+        "at cliff, should accrue full amount from start"
+    );
 }

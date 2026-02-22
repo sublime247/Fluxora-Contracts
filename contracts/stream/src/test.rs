@@ -98,7 +98,6 @@ impl<'a> TestContext<'a> {
             token_id,
             sender,
             recipient,
-            admin,
             sac,
         }
     }

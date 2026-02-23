@@ -251,15 +251,19 @@ impl FluxoraStream {
 
     /// Resume a paused stream. Only the sender or admin may call this.
     /// # Panics
-    /// - If the stream is not in `Paused` state.
+    /// - If the stream is `Active` (not paused).
+    /// - If the stream is `Completed` (terminal state).
+    /// - If the stream is `Cancelled` (terminal state).
     pub fn resume_stream(env: Env, stream_id: u64) {
         let mut stream = load_stream(&env, stream_id);
         Self::require_sender_or_admin(&env, &stream.sender);
 
-        assert!(
-            stream.status == StreamStatus::Paused,
-            "stream is not paused"
-        );
+        match stream.status {
+            StreamStatus::Active => panic!("stream is active, not paused"),
+            StreamStatus::Completed => panic!("stream is completed"),
+            StreamStatus::Cancelled => panic!("stream is cancelled"),
+            StreamStatus::Paused => {}
+        }
 
         stream.status = StreamStatus::Active;
         save_stream(&env, &stream);
@@ -388,25 +392,15 @@ impl FluxoraStream {
     }
 
     /// Internal helper to check authorization for sender or admin.
-    fn require_sender_or_admin(env: &Env, sender: &Address) {
-        let admin = get_admin(env);
-
-        // If the admin is the one calling, they must authorize.
-        // Otherwise, the sender must authorize.
-        if sender != &admin {
-            // This allows the admin to bypass the sender's auth
-            // if we use a separate admin entrypoint, or we can
-            // rely on the transaction signatures.
-            sender.require_auth();
-        } else {
-            admin.require_auth();
-        }
+    fn require_sender_or_admin(_env: &Env, sender: &Address) {
+        // Only the sender can manage their own stream via these paths.
+        // Admin overrides are handled by the 'as_admin' specific functions.
+        sender.require_auth();
     }
 }
 
 #[contractimpl]
 impl FluxoraStream {
-    /// Cancel a stream as the contract admin. Identical logic to cancel_stream.
     pub fn cancel_stream_as_admin(env: Env, stream_id: u64) {
         let admin = get_admin(&env);
         admin.require_auth();
@@ -447,15 +441,31 @@ impl FluxoraStream {
             stream.status == StreamStatus::Active,
             "stream is not active"
         );
+      
+stream.status = StreamStatus::Paused;
+save_stream(&env, &stream);
 
-        stream.status = StreamStatus::Paused;
-        save_stream(&env, &stream);
+env.events().publish(
+    (symbol_short!("paused"), stream_id),
+    StreamEvent::Paused(stream_id),
+);
 
-        env.events().publish(
-            (symbol_short!("paused"), stream_id),
-            StreamEvent::Paused(stream_id),
-        );
-    }
+pub fn resume_stream_as_admin(env: Env, stream_id: u64) {
+    get_admin(&env).require_auth();
+    let mut stream = load_stream(&env, stream_id);
+
+    assert!(
+        stream.status == StreamStatus::Paused,
+        "stream is not paused"
+    );
+
+    stream.status = StreamStatus::Active;
+    save_stream(&env, &stream);
+
+    env.events().publish(
+        (symbol_short!("resumed"), stream_id),
+        StreamEvent::Resumed(stream_id),
+    );
 }
 
 #[cfg(test)]

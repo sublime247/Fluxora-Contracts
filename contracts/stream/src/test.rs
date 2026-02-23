@@ -4787,3 +4787,48 @@ fn test_stream_id_stability_after_state_changes() {
         "counter must continue monotonically after state mutations"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tests — version getter
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_version_returns_one() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register_contract(None, FluxoraStream);
+    let token_id = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let client = FluxoraStreamClient::new(&env, &contract_id);
+    client.init(&token_id, &admin);
+
+    assert_eq!(client.version(), 1u32);
+}
+
+#[test]
+fn test_version_is_consistent_across_calls() {
+    let ctx = TestContext::setup();
+
+    let v1 = ctx.client().version();
+    let v2 = ctx.client().version();
+
+    assert_eq!(v1, v2, "version must be stable across calls");
+    assert_eq!(v1, 1u32);
+}
+
+#[test]
+fn test_version_unaffected_by_stream_operations() {
+    let ctx = TestContext::setup();
+
+    let before = ctx.client().version();
+
+    // Create and cancel a stream
+    let stream_id = ctx.create_default_stream();
+    ctx.client().cancel_stream(&stream_id);
+
+    let after = ctx.client().version();
+
+    assert_eq!(before, after, "version must not change after operations");
+}

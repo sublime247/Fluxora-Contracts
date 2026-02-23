@@ -4797,18 +4797,21 @@ fn test_stream_id_stability_after_state_changes() {
 fn test_set_admin_succeeds() {
     let ctx = TestContext::setup();
     let new_admin = Address::generate(&ctx.env);
-    
+
     // Get original config
     let original_config = ctx.client().get_config();
     assert_eq!(original_config.admin, ctx.admin);
-    
+
     // Set new admin
     ctx.client().set_admin(&new_admin);
-    
+
     // Verify config updated
     let updated_config = ctx.client().get_config();
     assert_eq!(updated_config.admin, new_admin);
-    assert_eq!(updated_config.token, original_config.token, "token must remain unchanged");
+    assert_eq!(
+        updated_config.token, original_config.token,
+        "token must remain unchanged"
+    );
 }
 
 /// Non-admin cannot call set_admin
@@ -4818,7 +4821,7 @@ fn test_set_admin_non_admin_fails() {
     let ctx = TestContext::setup_strict();
     let new_admin = Address::generate(&ctx.env);
     let non_admin = Address::generate(&ctx.env);
-    
+
     // Try to set admin as non-admin (should fail)
     use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
     ctx.env.mock_auths(&[MockAuth {
@@ -4830,7 +4833,7 @@ fn test_set_admin_non_admin_fails() {
             sub_invokes: &[],
         },
     }]);
-    
+
     ctx.client().set_admin(&new_admin);
 }
 
@@ -4839,23 +4842,23 @@ fn test_set_admin_non_admin_fails() {
 fn test_set_admin_new_admin_gains_privileges() {
     let ctx = TestContext::setup();
     let new_admin = Address::generate(&ctx.env);
-    
+
     // Create a stream
     ctx.env.ledger().set_timestamp(0);
     let stream_id = ctx.create_default_stream();
-    
+
     // Rotate admin
     ctx.client().set_admin(&new_admin);
-    
+
     // Verify new admin in config
     assert_eq!(ctx.client().get_config().admin, new_admin);
-    
+
     // New admin can pause stream (with mock_all_auths this works)
     ctx.client().pause_stream_as_admin(&stream_id);
-    
+
     let state = ctx.client().get_stream_state(&stream_id);
     assert_eq!(state.status, StreamStatus::Paused);
-    
+
     // Note: Testing that old admin loses privileges requires strict auth mocking
     // which is complex with token transfers. The authorization check in set_admin
     // ensures only the current admin can rotate keys, and the admin functions
@@ -4867,13 +4870,13 @@ fn test_set_admin_new_admin_gains_privileges() {
 fn test_set_admin_emits_event() {
     let ctx = TestContext::setup();
     let new_admin = Address::generate(&ctx.env);
-    
+
     ctx.client().set_admin(&new_admin);
-    
+
     // Verify event was published
     let events = ctx.env.events().all();
-    assert!(events.len() > 0, "should emit at least one event");
-    
+    assert!(!events.is_empty(), "should emit at least one event");
+
     // The event exists and was published successfully
     // Detailed event structure validation is covered by integration tests
 }
@@ -4885,15 +4888,15 @@ fn test_set_admin_multiple_rotations() {
     let admin2 = Address::generate(&ctx.env);
     let admin3 = Address::generate(&ctx.env);
     let admin4 = Address::generate(&ctx.env);
-    
+
     // First rotation
     ctx.client().set_admin(&admin2);
     assert_eq!(ctx.client().get_config().admin, admin2);
-    
+
     // Second rotation (admin2 → admin3)
     ctx.client().set_admin(&admin3);
     assert_eq!(ctx.client().get_config().admin, admin3);
-    
+
     // Third rotation (admin3 → admin4)
     ctx.client().set_admin(&admin4);
     assert_eq!(ctx.client().get_config().admin, admin4);
@@ -4903,15 +4906,15 @@ fn test_set_admin_multiple_rotations() {
 #[test]
 fn test_set_admin_to_various_addresses() {
     let ctx = TestContext::setup();
-    
+
     // Can set to sender
     ctx.client().set_admin(&ctx.sender);
     assert_eq!(ctx.client().get_config().admin, ctx.sender);
-    
+
     // Can set to recipient
     ctx.client().set_admin(&ctx.recipient);
     assert_eq!(ctx.client().get_config().admin, ctx.recipient);
-    
+
     // Can set to contract itself
     ctx.client().set_admin(&ctx.contract_id);
     assert_eq!(ctx.client().get_config().admin, ctx.contract_id);
@@ -4921,17 +4924,17 @@ fn test_set_admin_to_various_addresses() {
 #[test]
 fn test_set_admin_does_not_affect_streams() {
     let ctx = TestContext::setup();
-    
+
     // Create stream before rotation
     ctx.env.ledger().set_timestamp(0);
     let stream_id = ctx.create_default_stream();
-    
+
     let state_before = ctx.client().get_stream_state(&stream_id);
-    
+
     // Rotate admin
     let new_admin = Address::generate(&ctx.env);
     ctx.client().set_admin(&new_admin);
-    
+
     // Stream state unchanged
     let state_after = ctx.client().get_stream_state(&stream_id);
     assert_eq!(state_before.stream_id, state_after.stream_id);
@@ -4946,12 +4949,15 @@ fn test_set_admin_does_not_affect_streams() {
 fn test_set_admin_does_not_affect_token() {
     let ctx = TestContext::setup();
     let original_token = ctx.client().get_config().token;
-    
+
     let new_admin = Address::generate(&ctx.env);
     ctx.client().set_admin(&new_admin);
-    
+
     let updated_token = ctx.client().get_config().token;
-    assert_eq!(original_token, updated_token, "token address must not change");
+    assert_eq!(
+        original_token, updated_token,
+        "token address must not change"
+    );
 }
 
 /// set_admin works when contract is not initialized should panic
@@ -4960,10 +4966,10 @@ fn test_set_admin_does_not_affect_token() {
 fn test_set_admin_uninitialized_contract_panics() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let contract_id = env.register_contract(None, FluxoraStream);
     let client = FluxoraStreamClient::new(&env, &contract_id);
-    
+
     let new_admin = Address::generate(&env);
     client.set_admin(&new_admin);
 }
@@ -4973,9 +4979,9 @@ fn test_set_admin_uninitialized_contract_panics() {
 fn test_set_admin_to_self() {
     let ctx = TestContext::setup();
     let original_admin = ctx.admin.clone();
-    
+
     ctx.client().set_admin(&ctx.admin);
-    
+
     let updated_admin = ctx.client().get_config().admin;
     assert_eq!(updated_admin, original_admin);
 }

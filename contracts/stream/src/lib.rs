@@ -622,14 +622,14 @@ impl FluxoraStream {
     pub fn set_admin(env: Env, new_admin: Address) {
         let mut config = get_config(&env);
         let old_admin = config.admin.clone();
-        
+
         // Only current admin can update admin
         old_admin.require_auth();
-        
+
         // Update admin in config
         config.admin = new_admin.clone();
         env.storage().instance().set(&DataKey::Config, &config);
-        
+
         // Emit event with old and new admin addresses
         env.events().publish(
             (symbol_short!("admin"), symbol_short!("updated")),

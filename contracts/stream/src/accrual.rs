@@ -101,7 +101,13 @@ mod accrued_after_end_time {
         let end_time: u64 = 2_000;
         let rate_per_second: i128 = 1;
         let deposit_amount: i128 = 1_000;
-        (start_time, cliff_time, end_time, rate_per_second, deposit_amount)
+        (
+            start_time,
+            cliff_time,
+            end_time,
+            rate_per_second,
+            deposit_amount,
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -183,7 +189,10 @@ mod accrued_after_end_time {
         let (start, cliff, end, rate, deposit) = standard_stream();
         let midpoint = (start + end) / 2; // 1500
         let accrued = calculate_accrued_amount(start, cliff, end, rate, deposit, midpoint);
-        assert_eq!(accrued, 500, "halfway through, should accrue half the deposit");
+        assert_eq!(
+            accrued, 500,
+            "halfway through, should accrue half the deposit"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -195,12 +204,12 @@ mod accrued_after_end_time {
     fn high_rate_caps_at_deposit_at_end_time() {
         // rate=10/s, duration=1000s => total streamable=10_000 but deposit=5_000
         let accrued = calculate_accrued_amount(
-            0,       // start
-            0,       // cliff
-            1_000,   // end
-            10,      // rate_per_second
-            5_000,   // deposit (lower than rate * duration)
-            1_000,   // current_time == end_time
+            0,     // start
+            0,     // cliff
+            1_000, // end
+            10,    // rate_per_second
+            5_000, // deposit (lower than rate * duration)
+            1_000, // current_time == end_time
         );
         assert_eq!(
             accrued, 5_000,
@@ -212,12 +221,7 @@ mod accrued_after_end_time {
     #[test]
     fn high_rate_long_after_end_still_caps_at_deposit() {
         let accrued = calculate_accrued_amount(
-            0,
-            0,
-            1_000,
-            10,
-            5_000,
-            999_999, // far future
+            0, 0, 1_000, 10, 5_000, 999_999, // far future
         );
         assert_eq!(accrued, 5_000);
     }
@@ -233,14 +237,17 @@ mod accrued_after_end_time {
         // start=0, cliff=5000, end=1000 => start < end but cliff > end
         // The function should return 0 because current_time < cliff_time
         let accrued = calculate_accrued_amount(
-            0,      // start
-            5_000,  // cliff (way after end)
-            1_000,  // end
-            1,      // rate
-            1_000,  // deposit
-            2_000,  // current_time > end but < cliff
+            0,     // start
+            5_000, // cliff (way after end)
+            1_000, // end
+            1,     // rate
+            1_000, // deposit
+            2_000, // current_time > end but < cliff
         );
-        assert_eq!(accrued, 0, "before cliff, accrual must be zero even if past end_time");
+        assert_eq!(
+            accrued, 0,
+            "before cliff, accrual must be zero even if past end_time"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -252,7 +259,7 @@ mod accrued_after_end_time {
     fn pure_function_same_result_on_repeat_calls() {
         let (start, cliff, end, rate, deposit) = standard_stream();
         let t = end + 500;
-        let first  = calculate_accrued_amount(start, cliff, end, rate, deposit, t);
+        let first = calculate_accrued_amount(start, cliff, end, rate, deposit, t);
         let second = calculate_accrued_amount(start, cliff, end, rate, deposit, t);
         assert_eq!(first, second, "pure function must be deterministic");
         assert_eq!(first, deposit);
@@ -268,7 +275,7 @@ mod accrued_after_end_time {
     fn cap_matches_issue_formula() {
         let start: u64 = 500;
         let cliff: u64 = 500;
-        let end: u64   = 1_500;
+        let end: u64 = 1_500;
         let rate: i128 = 3;
         let deposit: i128 = 2_000;
 

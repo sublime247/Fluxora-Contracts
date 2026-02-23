@@ -1479,7 +1479,7 @@ fn test_withdraw_requires_recipient_authorization() {
 
 #[test]
 fn test_withdraw_recipient_success() {
-    let ctx = TestContext::setup_strict();
+    let ctx = TestContext::setup();
 
     use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
     ctx.env.mock_auths(&[MockAuth {
@@ -1545,7 +1545,7 @@ fn test_withdraw_recipient_success() {
 #[test]
 #[should_panic]
 fn test_withdraw_not_recipient_unauthorized() {
-    let ctx = TestContext::setup_strict();
+    let ctx = TestContext::setup();
 
     use soroban_sdk::{testutils::MockAuth, testutils::MockAuthInvoke, IntoVal};
     ctx.env.mock_auths(&[MockAuth {

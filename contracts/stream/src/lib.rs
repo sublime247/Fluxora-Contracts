@@ -7,6 +7,19 @@ use soroban_sdk::{
 };
 
 // ---------------------------------------------------------------------------
+// TTL constants
+// ---------------------------------------------------------------------------
+
+/// Minimum remaining TTL (in ledgers) before we bump.  ~1 day at 5 s/ledger.
+const INSTANCE_LIFETIME_THRESHOLD: u32 = 17_280;
+/// Extend to ~7 days of ledgers when bumping instance storage.
+const INSTANCE_BUMP_AMOUNT: u32 = 120_960;
+/// Minimum remaining TTL for persistent (stream) entries.
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = 17_280;
+/// Extend persistent entries to ~7 days of ledgers.
+const PERSISTENT_BUMP_AMOUNT: u32 = 120_960;
+
+// ---------------------------------------------------------------------------
 // Data types
 // ---------------------------------------------------------------------------
 
@@ -71,7 +84,16 @@ pub enum DataKey {
 // Storage helpers
 // ---------------------------------------------------------------------------
 
+/// Extend instance storage TTL so Config and NextStreamId do not expire.
+/// Called on every entry-point that reads or writes instance storage.
+fn bump_instance_ttl(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
 fn get_config(env: &Env) -> Config {
+    bump_instance_ttl(env);
     env.storage()
         .instance()
         .get(&DataKey::Config)
@@ -87,6 +109,7 @@ fn get_admin(env: &Env) -> Address {
 }
 
 fn get_stream_count(env: &Env) -> u64 {
+    bump_instance_ttl(env);
     env.storage()
         .instance()
         .get(&DataKey::NextStreamId)
@@ -95,21 +118,37 @@ fn get_stream_count(env: &Env) -> u64 {
 
 fn set_stream_count(env: &Env, count: u64) {
     env.storage().instance().set(&DataKey::NextStreamId, &count);
+    bump_instance_ttl(env);
 }
 
 fn load_stream(env: &Env, stream_id: u64) -> Result<Stream, ContractError> {
-    env.storage()
+    let key = DataKey::Stream(stream_id);
+    let stream: Stream = env
+        .storage()
         .persistent()
-        .get(&DataKey::Stream(stream_id))
-        .ok_or(ContractError::StreamNotFound)
+        .get(&key)
+        .ok_or(ContractError::StreamNotFound)?;
+
+    // Bump TTL on read so actively-queried streams don't expire
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
+
+    Ok(stream)
 }
 
 fn save_stream(env: &Env, stream: &Stream) {
     let key = DataKey::Stream(stream.stream_id);
     env.storage().persistent().set(&key, stream);
 
-    // Requirement from Issue #1: extend TTL on stream save to ensure persistence
-    env.storage().persistent().extend_ttl(&key, 17280, 120960);
+    // Extend TTL on stream save to ensure persistence
+    env.storage().persistent().extend_ttl(
+        &key,
+        PERSISTENT_LIFETIME_THRESHOLD,
+        PERSISTENT_BUMP_AMOUNT,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -150,8 +189,8 @@ impl FluxoraStream {
         env.storage().instance().set(&DataKey::Config, &config);
         env.storage().instance().set(&DataKey::NextStreamId, &0u64);
 
-        // Ensure instance storage (Config/ID) doesn't expire quickly
-        env.storage().instance().extend_ttl(17280, 120960);
+        // Ensure instance storage (Config / NextStreamId) doesn't expire quickly
+        bump_instance_ttl(&env);
     }
 
     /// Create a new payment stream with specified parameters.
@@ -691,6 +730,9 @@ impl FluxoraStream {
         // Update admin in config
         config.admin = new_admin.clone();
         env.storage().instance().set(&DataKey::Config, &config);
+
+        // Bump TTL after instance write
+        bump_instance_ttl(&env);
 
         // Emit event with old and new admin addresses
         env.events().publish(

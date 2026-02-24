@@ -481,39 +481,47 @@ impl FluxoraStream {
     /// - `stream_id`: Unique identifier of the stream to withdraw from
     ///
     /// # Returns
-    /// - `i128`: The amount of tokens transferred to the recipient
+    /// - `i128`: The amount of tokens transferred to the recipient (0 if nothing to withdraw)
     ///
     /// # Authorization
     /// - Requires authorization from the stream's recipient (only recipient can withdraw)
     /// - This prevents anyone from withdrawing on behalf of the recipient
     ///
+    /// # Zero Withdrawable Behavior
+    /// - If `accrued == withdrawn_amount` (nothing to withdraw), returns 0 immediately
+    /// - No token transfer occurs, no state change, no event published
+    /// - This is idempotent: safe to call multiple times without side effects
+    /// - Occurs before cliff time or when all accrued funds already withdrawn
+    /// - Frontends can call withdraw without pre-checking balance
+    ///
     /// # Panics
     /// - If the stream is `Completed` (all tokens already withdrawn)
     /// - If the stream is `Paused` (withdrawals not allowed while paused)
-    /// - If there is nothing to withdraw (`accrued == withdrawn_amount`)
     /// - If the stream does not exist (`stream_id` is invalid)
     /// - If caller is not authorized (not the recipient)
     /// - If token transfer fails (insufficient contract balance, should not happen)
     ///
     /// # State Changes
-    /// - Updates `withdrawn_amount` by the amount transferred
+    /// - Updates `withdrawn_amount` by the amount transferred (only if withdrawable > 0)
     /// - Sets status to `Completed` if all deposited tokens are withdrawn
     /// - Extends stream storage TTL to prevent expiration
     ///
     /// # Events
-    /// - Publishes `withdrew(stream_id, amount)` event on success
+    /// - Publishes `withdrew(stream_id, amount)` event on success (only if amount > 0)
     ///
     /// # Usage Notes
     /// - Can be called multiple times to withdraw incrementally
     /// - Accrual is time-based: `min((now - start_time) × rate, deposit_amount)`
-    /// - Before cliff time, accrued amount is 0 (nothing to withdraw)
+    /// - Before cliff time, accrued amount is 0 (returns 0, no transfer)
     /// - After end_time, accrued amount is capped at deposit_amount
     /// - Works on `Active` and `Cancelled` streams, not on `Paused` or `Completed`
     /// - For cancelled streams, only the accrued amount (not refunded) can be withdrawn
     ///
     /// # Examples
     /// - Stream: 1000 tokens over 1000 seconds (1 token/sec)
+    /// - At t=0 (before cliff): withdraw() returns 0 (no transfer)
     /// - At t=300: withdraw() returns 300 tokens
+    /// - At t=300 (again): withdraw() returns 0 (already withdrawn)
     /// - At t=800: withdraw() returns 500 tokens (800 - 300 already withdrawn)
     /// - At t=1000: withdraw() returns 200 tokens, status → Completed
     pub fn withdraw(env: Env, stream_id: u64) -> Result<i128, ContractError> {
@@ -537,7 +545,13 @@ impl FluxoraStream {
 
         let accrued = Self::calculate_accrued(env.clone(), stream_id)?;
         let withdrawable = accrued - stream.withdrawn_amount;
-        assert!(withdrawable > 0, "nothing to withdraw");
+
+        // Handle zero withdrawable: return 0 without transfer or state change (idempotent).
+        // This occurs before cliff or when all accrued funds have been withdrawn.
+        // Frontends can safely call withdraw without checking balance first.
+        if withdrawable == 0 {
+            return Ok(0);
+        }
 
         // CEI: update state before external token transfer to reduce reentrancy risk.
         stream.withdrawn_amount += withdrawable;

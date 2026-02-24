@@ -2340,14 +2340,16 @@ fn test_withdraw_from_paused_stream_completes_if_full() {
     ctx.client().withdraw(&stream_id);
 }
 
+/// Test withdraw when withdrawable is zero (nothing to withdraw).
+/// Should return 0 without transfer or state change (idempotent).
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_nothing_panics() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_default_stream();
 
     ctx.env.ledger().set_timestamp(0);
-    ctx.client().withdraw(&stream_id);
+    let withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(withdrawn, 0, "should return 0 when nothing to withdraw");
 }
 
 #[test]
@@ -2436,13 +2438,14 @@ fn test_withdraw_mid_stream() {
     assert_eq!(amount, 500);
 }
 
+/// Test withdraw before cliff returns 0 (idempotent behavior).
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_before_cliff_panics() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_cliff_stream();
     ctx.env.ledger().set_timestamp(100);
-    ctx.client().withdraw(&stream_id);
+    let withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(withdrawn, 0, "should return 0 before cliff");
 }
 
 /// Verify that withdraw enforces recipient-only authorization.
@@ -4437,17 +4440,22 @@ fn test_resume_stream_as_admin_not_found() {
 // Tests — Issue: withdraw zero and excess handling
 // ---------------------------------------------------------------------------
 
-/// Test withdraw when accrued - withdrawn = 0 before cliff
-/// Should panic with "nothing to withdraw"
+/// Test withdraw when withdrawable is zero before cliff.
+/// Should return 0 without transfer or state change (idempotent).
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_zero_before_cliff() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_cliff_stream(); // cliff at t=500
 
     // Before cliff, accrued = 0, withdrawn = 0, so withdrawable = 0
     ctx.env.ledger().set_timestamp(100);
-    ctx.client().withdraw(&stream_id);
+    let withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(withdrawn, 0, "should return 0 before cliff");
+
+    // Verify no state change
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.withdrawn_amount, 0);
+    assert_eq!(state.status, StreamStatus::Active);
 }
 
 /// Test withdraw when accrued - withdrawn = 0 after full withdrawal
@@ -4471,23 +4479,27 @@ fn test_withdraw_zero_after_full_withdrawal() {
     ctx.client().withdraw(&stream_id);
 }
 
-/// Test withdraw when accrued - withdrawn = 0 at start time (no cliff)
-/// Should panic with "nothing to withdraw"
+/// Test withdraw when withdrawable is zero at start time (no cliff).
+/// Should return 0 without transfer or state change (idempotent).
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_zero_at_start_time() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_default_stream();
 
     // At start time, accrued = 0, withdrawn = 0, so withdrawable = 0
     ctx.env.ledger().set_timestamp(0);
-    ctx.client().withdraw(&stream_id);
+    let withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(withdrawn, 0, "should return 0 at start time");
+
+    // Verify no state change
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.withdrawn_amount, 0);
+    assert_eq!(state.status, StreamStatus::Active);
 }
 
-/// Test withdraw immediately after previous withdrawal with no time elapsed
-/// Should panic with "nothing to withdraw"
+/// Test withdraw immediately after previous withdrawal with no time elapsed.
+/// Should return 0 without transfer or state change (idempotent).
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_zero_no_time_elapsed() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_default_stream();
@@ -4497,15 +4509,17 @@ fn test_withdraw_zero_no_time_elapsed() {
     let withdrawn = ctx.client().withdraw(&stream_id);
     assert_eq!(withdrawn, 500);
 
-    // Try to withdraw again at same timestamp - should panic
-    ctx.client().withdraw(&stream_id);
+    // Try to withdraw again at same timestamp - should return 0
+    let withdrawn2 = ctx.client().withdraw(&stream_id);
+    assert_eq!(withdrawn2, 0, "should return 0 when no time elapsed");
+
+    // Verify no additional state change
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.withdrawn_amount, 500);
 }
 
-/// Issue #128 — withdraw when accrued equals withdrawn (zero withdrawable)
-/// Expected: second withdraw panics with "nothing to withdraw"
-/// and no token transfer occurs (recipient balance unchanged).
+/// Expected: second withdraw returns 0 (idempotent)
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_when_accrued_equals_withdrawn_zero_withdrawable() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_default_stream();
@@ -4527,10 +4541,11 @@ fn test_withdraw_when_accrued_equals_withdrawn_zero_withdrawable() {
     assert_eq!(recipient_balance_after_first, 600);
 
     // Second withdraw at same timestamp: accrued (600) - withdrawn (600) = 0
-    // Must panic with "nothing to withdraw" and must NOT transfer any tokens
-    ctx.client().withdraw(&stream_id);
+    // Should return 0 and must NOT transfer any tokens
+    let second_withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(second_withdrawn, 0);
 
-    // If we somehow reach here (we shouldn't), verify no extra tokens moved
+    // Verify no extra tokens moved
     let recipient_balance_after_second = ctx.token().balance(&ctx.recipient);
     assert_eq!(
         recipient_balance_after_second, recipient_balance_after_first,
@@ -4539,9 +4554,7 @@ fn test_withdraw_when_accrued_equals_withdrawn_zero_withdrawable() {
 }
 
 /// Test withdraw when cancelled with zero accrued
-/// Should panic with "nothing to withdraw"
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_zero_after_immediate_cancel() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_default_stream();
@@ -4553,8 +4566,53 @@ fn test_withdraw_zero_after_immediate_cancel() {
     let state = ctx.client().get_stream_state(&stream_id);
     assert_eq!(state.status, StreamStatus::Cancelled);
 
-    // Try to withdraw - should panic because accrued = 0
-    ctx.client().withdraw(&stream_id);
+    // Try to withdraw - should return 0 because accrued = 0
+    let withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(
+        withdrawn, 0,
+        "should return 0 when cancelled with no accrual"
+    );
+
+    // Verify no state change
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.withdrawn_amount, 0);
+}
+
+/// Test that zero withdrawable is truly idempotent: multiple calls return 0.
+/// Verifies no token transfer, no state change, no events published.
+#[test]
+fn test_withdraw_zero_idempotent_multiple_calls() {
+    let ctx = TestContext::setup();
+    let stream_id = ctx.create_cliff_stream(); // cliff at t=500
+
+    // Before cliff, withdrawable = 0
+    ctx.env.ledger().set_timestamp(100);
+
+    let initial_recipient_balance = ctx.token().balance(&ctx.recipient);
+    let initial_contract_balance = ctx.token().balance(&ctx.contract_id);
+
+    // Call withdraw multiple times
+    for _ in 0..5 {
+        let withdrawn = ctx.client().withdraw(&stream_id);
+        assert_eq!(withdrawn, 0, "should return 0 on every call");
+    }
+
+    // Verify no token transfers occurred
+    assert_eq!(
+        ctx.token().balance(&ctx.recipient),
+        initial_recipient_balance,
+        "recipient balance should not change"
+    );
+    assert_eq!(
+        ctx.token().balance(&ctx.contract_id),
+        initial_contract_balance,
+        "contract balance should not change"
+    );
+
+    // Verify no state change
+    let state = ctx.client().get_stream_state(&stream_id);
+    assert_eq!(state.withdrawn_amount, 0);
+    assert_eq!(state.status, StreamStatus::Active);
 }
 
 /// Test that contract correctly calculates withdrawable amount
@@ -4704,16 +4762,17 @@ fn test_withdraw_multiple_partial_no_excess() {
     assert_eq!(state.status, StreamStatus::Completed);
 }
 
-/// Test withdraw with cliff - before cliff returns zero withdrawable
+/// Test withdraw with cliff - before cliff returns zero withdrawable.
+/// Should return 0 without transfer or state change (idempotent).
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_zero_one_second_before_cliff() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_cliff_stream(); // cliff at t=500
 
     // One second before cliff
     ctx.env.ledger().set_timestamp(499);
-    ctx.client().withdraw(&stream_id);
+    let withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(withdrawn, 0, "should return 0 before cliff");
 }
 
 /// Test withdraw exactly at cliff time
@@ -4859,8 +4918,9 @@ fn test_withdraw_status_transition_to_completed() {
 }
 
 /// Test withdraw after cancel and then try to withdraw again
+/// Test withdraw after cancel then all accrued withdrawn.
+/// Should return 0 without transfer or state change (idempotent).
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_after_cancel_then_completed() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_default_stream();
@@ -4883,9 +4943,10 @@ fn test_withdraw_after_cancel_then_completed() {
     // Advance time substantially; cancelled accrual must remain frozen.
     ctx.env.ledger().set_timestamp(9_999);
 
-    // Try to withdraw again - should panic with "nothing to withdraw"
+    // Try to withdraw again - should return 0 (frozen)
     // because accrued (600) - withdrawn (600) = 0
-    ctx.client().withdraw(&stream_id);
+    let second_withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(second_withdrawn, 0);
 }
 
 // ---------------------------------------------------------------------------

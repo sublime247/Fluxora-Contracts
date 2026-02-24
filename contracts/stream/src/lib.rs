@@ -550,7 +550,7 @@ impl FluxoraStream {
         // This occurs before cliff or when all accrued funds have been withdrawn.
         // Frontends can safely call withdraw without checking balance first.
         if withdrawable == 0 {
-            return 0;
+            return Ok(0);
         }
 
         // CEI: update state before external token transfer to reduce reentrancy risk.

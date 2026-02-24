@@ -4518,11 +4518,8 @@ fn test_withdraw_zero_no_time_elapsed() {
     assert_eq!(state.withdrawn_amount, 500);
 }
 
-/// Issue #128 — withdraw when accrued equals withdrawn (zero withdrawable)
-/// Expected: second withdraw panics with "nothing to withdraw"
-/// and no token transfer occurs (recipient balance unchanged).
+/// Expected: second withdraw returns 0 (idempotent)
 #[test]
-#[should_panic(expected = "nothing to withdraw")]
 fn test_withdraw_when_accrued_equals_withdrawn_zero_withdrawable() {
     let ctx = TestContext::setup();
     let stream_id = ctx.create_default_stream();
@@ -4544,10 +4541,11 @@ fn test_withdraw_when_accrued_equals_withdrawn_zero_withdrawable() {
     assert_eq!(recipient_balance_after_first, 600);
 
     // Second withdraw at same timestamp: accrued (600) - withdrawn (600) = 0
-    // Must panic with "nothing to withdraw" and must NOT transfer any tokens
-    ctx.client().withdraw(&stream_id);
+    // Should return 0 and must NOT transfer any tokens
+    let second_withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(second_withdrawn, 0);
 
-    // If we somehow reach here (we shouldn't), verify no extra tokens moved
+    // Verify no extra tokens moved
     let recipient_balance_after_second = ctx.token().balance(&ctx.recipient);
     assert_eq!(
         recipient_balance_after_second, recipient_balance_after_first,
@@ -4556,7 +4554,6 @@ fn test_withdraw_when_accrued_equals_withdrawn_zero_withdrawable() {
 }
 
 /// Test withdraw when cancelled with zero accrued
-/// Should panic with "nothing to withdraw"
 #[test]
 fn test_withdraw_zero_after_immediate_cancel() {
     let ctx = TestContext::setup();
@@ -4946,9 +4943,10 @@ fn test_withdraw_after_cancel_then_completed() {
     // Advance time substantially; cancelled accrual must remain frozen.
     ctx.env.ledger().set_timestamp(9_999);
 
-    // Try to withdraw again - should panic with "nothing to withdraw"
+    // Try to withdraw again - should return 0 (frozen)
     // because accrued (600) - withdrawn (600) = 0
-    ctx.client().withdraw(&stream_id);
+    let second_withdrawn = ctx.client().withdraw(&stream_id);
+    assert_eq!(second_withdrawn, 0);
 }
 
 // ---------------------------------------------------------------------------

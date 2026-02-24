@@ -3,8 +3,7 @@
 mod accrual;
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token,
-    Address, Env,
+    contract, contractimpl, contracttype, panic_with_error, symbol_short, token, Address, Env,
 };
 
 // ---------------------------------------------------------------------------
@@ -33,6 +32,7 @@ pub enum StreamStatus {
 #[repr(u32)]
 pub enum ContractError {
     StreamNotFound = 1,
+    InvalidState = 2,
 }
 
 #[contracttype]
@@ -41,13 +41,6 @@ pub enum StreamEvent {
     Paused(u64),
     Resumed(u64),
     Cancelled(u64),
-}
-
-#[contracterror]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum ContractError {
-    InvalidState = 1,
 }
 
 #[contracttype]

@@ -158,8 +158,7 @@ mod invariants {
 
             let mut prev = calculate_accrued_amount(start, cliff, end, rate, deposit, times_buf[0]);
 
-            for i in 1..len {
-                let t = times_buf[i];
+            for &t in times_buf.iter().take(len).skip(1) {
                 let now = calculate_accrued_amount(start, cliff, end, rate, deposit, t);
 
                 assert!(
@@ -170,7 +169,7 @@ mod invariants {
                     now,
                     prev
                 );
-
+            
                 prev = now;
             }
         }

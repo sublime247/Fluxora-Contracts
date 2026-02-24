@@ -5270,10 +5270,10 @@ fn test_create_stream_large_rate_overflow_in_accrual() {
     ctx.sac.mint(&ctx.sender, &(i128::MAX - 10_000_i128));
 
     // Extremely large rate, short duration → total still fits i128
-    let rate_per_second = i128::MAX / 1_000_000;           
-    let duration: u64 = 1_000_000;                        
+    let rate_per_second = i128::MAX / 1_000_000;
+    let duration: u64 = 1_000_000;
     let total_streamable = rate_per_second * (duration as i128);
-    let deposit_amount = total_streamable + 1;         
+    let deposit_amount = total_streamable + 1;
 
     let start_time = 1_700_000_000;
     let cliff_time = start_time;
@@ -5293,7 +5293,7 @@ fn test_create_stream_large_rate_overflow_in_accrual() {
     let accrued = ctx.client().calculate_accrued(&stream_id);
     assert!(accrued <= deposit_amount); // must not exceed deposit
     assert!(accrued >= 0);
-    assert_eq!(accrued, deposit_amount);
+    assert_eq!(accrued, deposit_amount-1);
 }
 
 #[test]
@@ -5328,7 +5328,6 @@ fn test_accrual_capped_at_exact_total() {
 }
 
 #[test]
-// #[should_panic(expected = "overflow calculating total streamable amount")]
 fn test_accrual_capped_when_deposit_exceeds_total() {
     let ctx = TestContext::setup();
     ctx.sac.mint(&ctx.sender, &(i128::MAX - 10_000_i128));

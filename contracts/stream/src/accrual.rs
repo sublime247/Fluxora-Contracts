@@ -169,7 +169,6 @@ mod invariants {
                     now,
                     prev
                 );
-            
                 prev = now;
             }
         }
